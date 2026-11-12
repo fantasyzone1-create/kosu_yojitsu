@@ -1,0 +1,4 @@
+# Excelに取り込むVBAはShift-JIS+CRLFのまま保存する(改行・文字コードを変換しない)
+src/vba/MonthSheetTools.bas -text
+*.xlsm binary
+*.xlsx binary
