@@ -7,6 +7,7 @@ authors = [
 ]
 requires-python = ">=3.9"
 dependencies = [
+    "holidays>=0.83",
     "openpyxl>=3.1.5",
 ]
 

@@ -10,6 +10,10 @@ Private Const MEMBER_BLOCKS As Long = 12
 Private Const HEADER_ROW As Long = 6
 Private Const FIRST_ROW As Long = 7
 Private Const FONT_NAME As String = "游ゴシック"
+Private Const HOLIDAY_SHEET As String = "祝日"
+Private Const HOLIDAY_NAME As String = "祝日リスト"   ' 稼働日数の計算で除外する日付の範囲名
+Private Const DEFAULT_DAILY As Double = 7.5            ' 1日の定時工数(h)の初期値
+Private Const DAILY_LABEL As String = "1日の定時工数(h)"
 
 ' 実績取込で使う正規表現(期間 / 工数計)。モジュール先頭で宣言する必要がある
 Private reP As Object
@@ -66,6 +70,8 @@ Public Sub SetupButton()
     btn.OnAction = "AddMonthSheet"
     btn.Font.Size = 12
     SetupImportSheet
+    SetupHolidaySheet
+    AddCapacityToAllMonthSheets   ' 旧バージョンの月シートに定時工数欄を追加(追加済みなら何もしない)
 End Sub
 
 ' ===== 実績取込(元ファイルの工数計をテンプレートの「実績」行へ反映) =====
@@ -584,6 +590,154 @@ Public Sub FormatAllMonthSheets()
     Application.ScreenUpdating = True
 End Sub
 
+' ===== 1日の定時工数 / 稼働日数(日本の平日-祝日) / 定時予定工数 =====
+
+' 祝日データ(2025~2035年。「日付 名称;」の並び)。これ以降の年は「祝日」シートに追記する
+Private Function HolidayData() As String
+    Dim s As String
+    s = s & "2025/1/1 元日;2025/1/13 成人の日;2025/2/11 建国記念の日;2025/2/23 天皇誕生日;2025/2/24 振替休日;2025/3/20 春分の日;"
+    s = s & "2025/4/29 昭和の日;2025/5/3 憲法記念日;2025/5/4 みどりの日;2025/5/5 こどもの日;2025/5/6 振替休日;2025/7/21 海の日;"
+    s = s & "2025/8/11 山の日;2025/9/15 敬老の日;2025/9/23 秋分の日;2025/10/13 スポーツの日;2025/11/3 文化の日;2025/11/23 勤労感謝の日;"
+    s = s & "2025/11/24 振替休日;2026/1/1 元日;2026/1/12 成人の日;2026/2/11 建国記念の日;2026/2/23 天皇誕生日;2026/3/20 春分の日;"
+    s = s & "2026/4/29 昭和の日;2026/5/3 憲法記念日;2026/5/4 みどりの日;2026/5/5 こどもの日;2026/5/6 振替休日;2026/7/20 海の日;"
+    s = s & "2026/8/11 山の日;2026/9/21 敬老の日;2026/9/22 国民の休日;2026/9/23 秋分の日;2026/10/12 スポーツの日;2026/11/3 文化の日;"
+    s = s & "2026/11/23 勤労感謝の日;2027/1/1 元日;2027/1/11 成人の日;2027/2/11 建国記念の日;2027/2/23 天皇誕生日;2027/3/21 春分の日;"
+    s = s & "2027/3/22 振替休日;2027/4/29 昭和の日;2027/5/3 憲法記念日;2027/5/4 みどりの日;2027/5/5 こどもの日;2027/7/19 海の日;"
+    s = s & "2027/8/11 山の日;2027/9/20 敬老の日;2027/9/23 秋分の日;2027/10/11 スポーツの日;2027/11/3 文化の日;2027/11/23 勤労感謝の日;"
+    s = s & "2028/1/1 元日;2028/1/10 成人の日;2028/2/11 建国記念の日;2028/2/23 天皇誕生日;2028/3/20 春分の日;2028/4/29 昭和の日;"
+    s = s & "2028/5/3 憲法記念日;2028/5/4 みどりの日;2028/5/5 こどもの日;2028/7/17 海の日;2028/8/11 山の日;2028/9/18 敬老の日;"
+    s = s & "2028/9/22 秋分の日;2028/10/9 スポーツの日;2028/11/3 文化の日;2028/11/23 勤労感謝の日;2029/1/1 元日;2029/1/8 成人の日;"
+    s = s & "2029/2/11 建国記念の日;2029/2/12 振替休日;2029/2/23 天皇誕生日;2029/3/20 春分の日;2029/4/29 昭和の日;2029/4/30 振替休日;"
+    s = s & "2029/5/3 憲法記念日;2029/5/4 みどりの日;2029/5/5 こどもの日;2029/7/16 海の日;2029/8/11 山の日;2029/9/17 敬老の日;"
+    s = s & "2029/9/23 秋分の日;2029/9/24 振替休日;2029/10/8 スポーツの日;2029/11/3 文化の日;2029/11/23 勤労感謝の日;2030/1/1 元日;"
+    s = s & "2030/1/14 成人の日;2030/2/11 建国記念の日;2030/2/23 天皇誕生日;2030/3/20 春分の日;2030/4/29 昭和の日;2030/5/3 憲法記念日;"
+    s = s & "2030/5/4 みどりの日;2030/5/5 こどもの日;2030/5/6 振替休日;2030/7/15 海の日;2030/8/11 山の日;2030/8/12 振替休日;"
+    s = s & "2030/9/16 敬老の日;2030/9/23 秋分の日;2030/10/14 スポーツの日;2030/11/3 文化の日;2030/11/4 振替休日;2030/11/23 勤労感謝の日;"
+    s = s & "2031/1/1 元日;2031/1/13 成人の日;2031/2/11 建国記念の日;2031/2/23 天皇誕生日;2031/2/24 振替休日;2031/3/21 春分の日;"
+    s = s & "2031/4/29 昭和の日;2031/5/3 憲法記念日;2031/5/4 みどりの日;2031/5/5 こどもの日;2031/5/6 振替休日;2031/7/21 海の日;"
+    s = s & "2031/8/11 山の日;2031/9/15 敬老の日;2031/9/23 秋分の日;2031/10/13 スポーツの日;2031/11/3 文化の日;2031/11/23 勤労感謝の日;"
+    s = s & "2031/11/24 振替休日;2032/1/1 元日;2032/1/12 成人の日;2032/2/11 建国記念の日;2032/2/23 天皇誕生日;2032/3/20 春分の日;"
+    s = s & "2032/4/29 昭和の日;2032/5/3 憲法記念日;2032/5/4 みどりの日;2032/5/5 こどもの日;2032/7/19 海の日;2032/8/11 山の日;"
+    s = s & "2032/9/20 敬老の日;2032/9/21 国民の休日;2032/9/22 秋分の日;2032/10/11 スポーツの日;2032/11/3 文化の日;2032/11/23 勤労感謝の日;"
+    s = s & "2033/1/1 元日;2033/1/10 成人の日;2033/2/11 建国記念の日;2033/2/23 天皇誕生日;2033/3/20 春分の日;2033/3/21 振替休日;"
+    s = s & "2033/4/29 昭和の日;2033/5/3 憲法記念日;2033/5/4 みどりの日;2033/5/5 こどもの日;2033/7/18 海の日;2033/8/11 山の日;"
+    s = s & "2033/9/19 敬老の日;2033/9/23 秋分の日;2033/10/10 スポーツの日;2033/11/3 文化の日;2033/11/23 勤労感謝の日;2034/1/1 元日;"
+    s = s & "2034/1/2 振替休日;2034/1/9 成人の日;2034/2/11 建国記念の日;2034/2/23 天皇誕生日;2034/3/20 春分の日;2034/4/29 昭和の日;"
+    s = s & "2034/5/3 憲法記念日;2034/5/4 みどりの日;2034/5/5 こどもの日;2034/7/17 海の日;2034/8/11 山の日;2034/9/18 敬老の日;"
+    s = s & "2034/9/23 秋分の日;2034/10/9 スポーツの日;2034/11/3 文化の日;2034/11/23 勤労感謝の日;2035/1/1 元日;2035/1/8 成人の日;"
+    s = s & "2035/2/11 建国記念の日;2035/2/12 振替休日;2035/2/23 天皇誕生日;2035/3/21 春分の日;2035/4/29 昭和の日;2035/4/30 振替休日;"
+    s = s & "2035/5/3 憲法記念日;2035/5/4 みどりの日;2035/5/5 こどもの日;2035/7/16 海の日;2035/8/11 山の日;2035/9/17 敬老の日;"
+    s = s & "2035/9/23 秋分の日;2035/9/24 振替休日;2035/10/8 スポーツの日;2035/11/3 文化の日;2035/11/23 勤労感謝の日;"
+    HolidayData = s
+End Function
+
+' 祝日シートと範囲名「祝日リスト」を用意する(シートが既にあれば内容は変更しない)
+Private Sub SetupHolidaySheet()
+    Dim ws As Worksheet, cur As Object, items As Variant, p As Variant, d As Variant
+    Dim i As Long, anchor As Worksheet
+    On Error Resume Next
+    Set ws = ThisWorkbook.Worksheets(HOLIDAY_SHEET)
+    Set anchor = ThisWorkbook.Worksheets(IMPORT_SHEET)
+    If anchor Is Nothing Then Set anchor = ThisWorkbook.Worksheets(CTRL_SHEET)
+    On Error GoTo 0
+    If ws Is Nothing Then
+        Set cur = ActiveSheet
+        If anchor Is Nothing Then
+            Set ws = ThisWorkbook.Worksheets.Add(After:=ThisWorkbook.Worksheets(ThisWorkbook.Worksheets.Count))
+        Else
+            Set ws = ThisWorkbook.Worksheets.Add(After:=anchor)
+        End If
+        ws.Name = HOLIDAY_SHEET
+        ws.Cells.Font.Name = FONT_NAME
+        ws.Range("A1").Value = "日付": ws.Range("B1").Value = "名称"
+        StyleCell ws.Range("A1:B1"), True, RGB(255, 255, 255), RGB(31, 78, 120)
+        items = Split(HolidayData(), ";")
+        For i = 0 To UBound(items)
+            If Len(items(i)) > 0 Then
+                p = Split(items(i), " ")
+                d = Split(p(0), "/")
+                ws.Cells(i + 2, 1).Value = DateSerial(CLng(d(0)), CLng(d(1)), CLng(d(2)))
+                ws.Cells(i + 2, 2).Value = p(1)
+            End If
+        Next i
+        ws.Range("A2:A400").NumberFormat = "yyyy/m/d"
+        ws.Range("D1").Value = "稼働日数の計算で除外する日付です。会社休業日(年末年始など)や次の年の祝日は末尾に追記してください(A2:A400が対象)。"
+        ws.Range("D1").Font.Size = 9: ws.Range("D1").Font.Color = RGB(89, 89, 89)
+        ws.Columns(1).ColumnWidth = 12
+        ws.Columns(2).ColumnWidth = 18
+        If Not cur Is Nothing Then cur.Activate
+    End If
+    ThisWorkbook.Names.Add Name:=HOLIDAY_NAME, RefersTo:="='" & HOLIDAY_SHEET & "'!$A$2:$A$400"
+End Sub
+
+' 月シートの3~5行目に、1日の定時工数の入力欄・週ごとの稼働日数・定時予定工数を作る
+Private Sub BuildCapacity(ByVal ws As Worksheet, ByVal y As Long, ByVal m As Long, _
+                          ByVal colFirst As Long, ByVal n As Long)
+    Dim colTotal As Long, j As Long, r As Long, mon As String, cl As String
+    Dim cCalc As Long
+    cCalc = RGB(242, 242, 242)
+    colTotal = colFirst + n
+
+    ws.Range("A3").Value = DAILY_LABEL
+    StyleCell ws.Range("A3"), True, 0, cCalc
+    ws.Range("B3").Value = DEFAULT_DAILY
+    StyleCell ws.Range("B3"), False, RGB(0, 0, 255), RGB(255, 242, 204)
+    ws.Range("B3").NumberFormat = "0.0"
+    With ws.Range("B3").Validation
+        .Delete
+        .Add Type:=xlValidateDecimal, AlertStyle:=xlValidAlertStop, _
+             Operator:=xlBetween, Formula1:="0", Formula2:="24"
+        .ErrorTitle = "入力エラー"
+        .ErrorMessage = "0~24の数値(h)を入力してください"
+    End With
+    ' 稼働日数の計算に使う月初日
+    ws.Range("C3").Value = DateSerial(y, m, 1)
+    ws.Range("C3").NumberFormat = """月初:""yyyy/m/d"
+    ws.Range("C3").Font.Name = FONT_NAME
+    ws.Range("C3").Font.Size = 9
+    ws.Range("C3").Font.Color = RGB(153, 153, 153)
+    ws.Range("C3").HorizontalAlignment = xlCenter
+
+    For r = 4 To 5
+        ws.Range(ws.Cells(r, 1), ws.Cells(r, 2)).Merge
+        ws.Cells(r, 1).Value = IIf(r = 4, "稼働日数(平日)", "定時予定工数(h)")
+        StyleCell ws.Range(ws.Cells(r, 1), ws.Cells(r, 2)), True, 0, cCalc
+        StyleCell ws.Range(ws.Cells(r, colFirst), ws.Cells(r, colTotal)), False, 0, cCalc
+        ws.Cells(r, colTotal).Font.Bold = True
+    Next r
+    For j = 0 To n - 1
+        cl = ColL(colFirst + j)
+        mon = "$C$3-WEEKDAY($C$3,3)+7*" & j
+        ws.Cells(4, colFirst + j).Formula = "=NETWORKDAYS(MAX($C$3," & mon & "),MIN(EOMONTH($C$3,0)," & _
+            mon & "+6)," & HOLIDAY_NAME & ")"
+        ws.Cells(5, colFirst + j).Formula = "=" & cl & "4*$B$3"
+    Next j
+    ws.Cells(4, colTotal).Formula = "=SUM(" & ColL(colFirst) & "4:" & ColL(colTotal - 1) & "4)"
+    ws.Cells(5, colTotal).Formula = "=SUM(" & ColL(colFirst) & "5:" & ColL(colTotal - 1) & "5)"
+    ws.Range(ws.Cells(4, colFirst), ws.Cells(4, colTotal)).NumberFormat = "0"
+    ws.Range(ws.Cells(5, colFirst), ws.Cells(5, colTotal)).NumberFormat = "0.0"
+End Sub
+
+' 定時工数欄のない既存の月シートに欄を追加する(追加済みのシートは何もしない)
+Public Sub AddCapacityToAllMonthSheets()
+    Dim ws As Worksheet, note As String, colTotal As Long
+    SetupHolidaySheet
+    For Each ws In ThisWorkbook.Worksheets
+        If IsMonthSheet(ws.Name) Then
+            If CStr(ws.Range("A3").Value) <> DAILY_LABEL Then
+                note = CStr(ws.Range("A3").Value)
+                ws.Range("A3").ClearContents
+                ws.Range("E3").Value = note
+                ws.Range("E3").Font.Name = FONT_NAME
+                ws.Range("E3").Font.Size = 9
+                ws.Range("E3").Font.Color = RGB(89, 89, 89)
+                colTotal = ws.Cells(HEADER_ROW, ws.Columns.Count).End(xlToLeft).Column
+                BuildCapacity ws, 2000 + CLng(Left(ws.Name, 2)), CLng(Mid(ws.Name, 4, 2)), 3, colTotal - 3
+            End If
+        End If
+    Next ws
+End Sub
+
 Private Sub BuildSheet(ByVal y As Long, ByVal m As Long, ByVal nm As String, ByVal members As Variant)
     Dim ws As Worksheet, before As Worksheet, sh As Worksheet
     Dim firstD As Date, lastD As Date, s As Date, e As Date
@@ -598,6 +752,7 @@ Private Sub BuildSheet(ByVal y As Long, ByVal m As Long, ByVal nm As String, ByV
     labels = Array("予定", "実績", "差異")
     hasMembers = Not IsEmpty(members)
 
+    SetupHolidaySheet   ' 祝日シート(稼働日数の計算用)が無ければ作る
     ' 年月順になる位置にシートを挿入
     For Each sh In ThisWorkbook.Worksheets
         If IsMonthSheet(sh.Name) Then
@@ -630,12 +785,14 @@ Private Sub BuildSheet(ByVal y As Long, ByVal m As Long, ByVal nm As String, ByV
     ws.Range("A1").Font.Size = 14: ws.Range("A1").Font.Bold = True
     ws.Range("A2").Value = "単位: 人時(h)。黄色のセルに入力してください(青文字=入力値、黒文字=自動計算)。"
     If hasMembers Then
-        ws.Range("A3").Value = "差異 = 実績 - 予定(プラスは超過)。メンバー名は直近のシートから引き継ぎました。"
+        ws.Range("E3").Value = "差異 = 実績 - 予定(プラスは超過)。メンバー名は直近のシートから引き継ぎました。"
     Else
-        ws.Range("A3").Value = "差異 = 実績 - 予定(プラスは超過)。"
+        ws.Range("E3").Value = "差異 = 実績 - 予定(プラスは超過)。"
     End If
-    ws.Range("A2:A3").Font.Size = 9
-    ws.Range("A2:A3").Font.Color = RGB(89, 89, 89)
+    ws.Range("A2").Font.Size = 9
+    ws.Range("E3").Font.Size = 9
+    ws.Range("A2").Font.Color = RGB(89, 89, 89)
+    ws.Range("E3").Font.Color = RGB(89, 89, 89)
 
     ' ヘッダー
     ws.Cells(HEADER_ROW, 1).Value = "メンバー"
@@ -651,6 +808,9 @@ Private Sub BuildSheet(ByVal y As Long, ByVal m As Long, ByVal nm As String, ByV
     ws.Cells(HEADER_ROW, colTotal).Value = "月合計"
     StyleCell ws.Range(ws.Cells(HEADER_ROW, 1), ws.Cells(HEADER_ROW, colTotal)), True, RGB(255, 255, 255), cHead, True
     ws.Rows(HEADER_ROW).RowHeight = 32
+
+    ' 定時工数欄(3~5行目)
+    BuildCapacity ws, y, m, colFirst, n
 
     ' メンバーブロック
     For b = 0 To MEMBER_BLOCKS - 1

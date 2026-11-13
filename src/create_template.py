@@ -7,6 +7,7 @@
 
 シート名は「YY年MM月」(例: 26年11月)。
 メンバーごとに「予定」「実績」「差異」の3行を持ち、週単位で工数(人時)を入力する。
+3~5行目に1日の定時工数の入力欄と、週ごとの稼働日数(日本の平日-祝日)・定時予定工数を持つ。
 """
 import calendar
 import re
@@ -17,10 +18,16 @@ from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 from openpyxl.formatting.rule import FormulaRule
+from openpyxl.workbook.defined_name import DefinedName
 from openpyxl.worksheet.datavalidation import DataValidation
+import holidays
 
 CONTROL_SHEET = "シート追加"
 FONT_NAME = "游ゴシック"
+HOLIDAY_SHEET = "祝日"
+HOLIDAY_NAME = "祝日リスト"  # 稼働日数の計算で除外する日付の範囲名
+HOLIDAY_YEARS = range(2025, 2036)
+DEFAULT_DAILY_HOURS = 7.5  # 1日の定時工数(h)の初期値
 MEMBER_BLOCKS = 12  # メンバー記入枠の数
 HEADER_ROW = 6
 FIRST_ROW = HEADER_ROW + 1
@@ -60,6 +67,67 @@ def _style(cell, bold=False, color="000000", fill=None, align="center", wrap=Fal
         cell.fill = fill
 
 
+def holiday_dates():
+    """日本の祝日(日付, 名称)を日付順で返す。"""
+    return sorted(holidays.Japan(years=list(HOLIDAY_YEARS)).items())
+
+
+def ensure_holiday_sheet(wb: Workbook):
+    """祝日シートと範囲名「祝日リスト」を用意する(既にあれば何もしない)。"""
+    if HOLIDAY_SHEET not in wb.sheetnames:
+        ws = wb.create_sheet(HOLIDAY_SHEET)
+        ws["A1"], ws["B1"] = "日付", "名称"
+        for c in ("A1", "B1"):
+            _style(ws[c], bold=True, color="FFFFFF", fill=FILL_HEADER)
+        for r, (d, nm) in enumerate(holiday_dates(), 2):
+            ws.cell(r, 1, d).number_format = "yyyy/m/d"
+            ws.cell(r, 2, nm)
+        ws["D1"] = "稼働日数の計算で除外する日付です。会社休業日(年末年始など)や次の年の祝日は末尾に追記してください(A2:A400が対象)。"
+        ws["D1"].font = Font(name=FONT_NAME, size=9, color="595959")
+        ws.column_dimensions["A"].width = 12
+        ws.column_dimensions["B"].width = 18
+    if HOLIDAY_NAME not in wb.defined_names:
+        wb.defined_names[HOLIDAY_NAME] = DefinedName(
+            HOLIDAY_NAME, attr_text=f"{HOLIDAY_SHEET}!$A$2:$A$400")
+
+
+def _build_capacity(ws, year, month, weeks, col_first):
+    """1日の定時工数の入力欄と、週ごとの稼働日数・定時予定工数の行を作る(3~5行目)。"""
+    L = get_column_letter
+    n = len(weeks)
+    col_total = col_first + n
+    _style(ws.cell(3, 1, "1日の定時工数(h)"), bold=True, fill=FILL_CALC)
+    c = ws.cell(3, 2, DEFAULT_DAILY_HOURS)
+    _style(c, color="0000FF", fill=FILL_INPUT)
+    c.number_format = "0.0"
+    dv = DataValidation(type="decimal", operator="between", formula1="0", formula2="24",
+                        allow_blank=False, showErrorMessage=True,
+                        errorTitle="入力エラー", error="0~24の数値(h)を入力してください")
+    ws.add_data_validation(dv)
+    dv.add("B3")
+    m1 = ws.cell(3, 3, date(year, month, 1))
+    m1.number_format = '"月初:"yyyy/m/d'
+    m1.font = Font(name=FONT_NAME, size=9, color="999999")
+    m1.alignment = Alignment(horizontal="center")
+    for r, label in ((4, "稼働日数(平日)"), (5, "定時予定工数(h)")):
+        ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=2)
+        _style(ws.cell(r, 1, label), bold=True, fill=FILL_CALC)
+        ws.cell(r, 2).border = BORDER
+    for j in range(n):
+        cl = L(col_first + j)
+        mon = f"$C$3-WEEKDAY($C$3,3)+7*{j}"
+        ws.cell(4, col_first + j).value = (
+            f"=NETWORKDAYS(MAX($C$3,{mon}),MIN(EOMONTH($C$3,0),{mon}+6),{HOLIDAY_NAME})")
+        ws.cell(5, col_first + j).value = f"={cl}4*$B$3"
+    for r, fmt in ((4, "0"), (5, "0.0")):
+        rng = f"{L(col_first)}{r}:{L(col_total - 1)}{r}"
+        ws.cell(r, col_total).value = f"=SUM({rng})"
+        for cc in range(col_first, col_total + 1):
+            cell = ws.cell(r, cc)
+            cell.number_format = fmt
+            _style(cell, bold=(cc == col_total), fill=FILL_CALC)
+
+
 def build_sheet(wb: Workbook, year: int, month: int, ws=None, members=None):
     """月シートを作る。membersを渡すとメンバー名を引き継ぎ、記入例は入れない。"""
     ws = ws or wb.create_sheet()
@@ -74,11 +142,12 @@ def build_sheet(wb: Workbook, year: int, month: int, ws=None, members=None):
     ws["A1"] = f"{year}年{month}月 工数予実管理表"
     ws["A1"].font = Font(name=FONT_NAME, size=14, bold=True)
     ws["A2"] = "単位: 人時(h)。黄色のセルに入力してください(青文字=入力値、黒文字=自動計算)。"
-    ws["A3"] = "差異 = 実績 − 予定(プラスは超過)。" + (
+    ws["E3"] = "差異 = 実績 − 予定(プラスは超過)。" + (
         "メンバー名は前月シートから引き継ぎました。" if members is not None
         else "1行目のブロックは記入例です。上書きして使ってください。")
-    for r in (2, 3):
-        ws.cell(r, 1).font = Font(name=FONT_NAME, size=9, color="595959")
+    for a in ("A2", "E3"):
+        ws[a].font = Font(name=FONT_NAME, size=9, color="595959")
+    _build_capacity(ws, year, month, weeks, col_first)
 
     # ヘッダー
     heads = ["メンバー", "区分"] + [
@@ -225,11 +294,13 @@ def add_month_sheet(path: str, year: int, month: int) -> str:
     except FileNotFoundError:
         wb = Workbook()
         build_control_sheet(wb, year, month, ws=wb.active)
+        ensure_holiday_sheet(wb)
         build_sheet(wb, year, month)
         wb.save(path)
         return name
     if name in wb.sheetnames:
         raise ValueError(f"シート「{name}」は既に存在します")
+    ensure_holiday_sheet(wb)
     existing = month_sheets(wb)
     members = read_members(max(existing, key=lambda w: w.title)) if existing else None
     build_sheet(wb, year, month, members=members)
